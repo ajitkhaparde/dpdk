@@ -1848,8 +1848,7 @@ static int bnxt_hwrm_pf_func_cfg(struct bnxt *bp, int tx_rings)
 			HWRM_FUNC_CFG_INPUT_ENABLES_NUM_L2_CTXS |
 			HWRM_FUNC_CFG_INPUT_ENABLES_NUM_VNICS |
 			HWRM_FUNC_CFG_INPUT_ENABLES_NUM_HW_RING_GRPS);
-	req.flags = rte_cpu_to_le_32(
-			HWRM_FUNC_CFG_INPUT_FLAGS_STD_TX_RING_MODE_ENABLE);
+	req.flags = rte_cpu_to_le_32(bp->pf.func_cfg_flags);
 	req.mtu = rte_cpu_to_le_16(bp->eth_dev->data->mtu +
 				ETHER_HDR_LEN + ETHER_CRC_LEN + VLAN_TAG_SIZE);
 	req.mru = rte_cpu_to_le_16(bp->eth_dev->data->mtu +
@@ -2012,7 +2011,10 @@ int bnxt_hwrm_allocate_pf_only(struct bnxt *bp)
 		return rc;
 
 	bp->pf.func_cfg_flags &=
-			~HWRM_FUNC_CFG_INPUT_FLAGS_STD_TX_RING_MODE_ENABLE;
+		~(HWRM_FUNC_CFG_INPUT_FLAGS_STD_TX_RING_MODE_ENABLE |
+		HWRM_FUNC_CFG_INPUT_FLAGS_STD_TX_RING_MODE_DISABLE);
+	bp->pf.func_cfg_flags |=
+		HWRM_FUNC_CFG_INPUT_FLAGS_STD_TX_RING_MODE_DISABLE;
 	rc = bnxt_hwrm_pf_func_cfg(bp, bp->max_tx_rings);
 	return rc;
 }
@@ -2047,8 +2049,11 @@ int bnxt_hwrm_allocate_vfs(struct bnxt *bp, int num_vfs)
 	 *
 	 * This has been fixed with firmware versions above 20.6.54
 	 */
+	bp->pf.func_cfg_flags &=
+		~(HWRM_FUNC_CFG_INPUT_FLAGS_STD_TX_RING_MODE_ENABLE |
+		HWRM_FUNC_CFG_INPUT_FLAGS_STD_TX_RING_MODE_DISABLE);
 	bp->pf.func_cfg_flags |=
-			HWRM_FUNC_CFG_INPUT_FLAGS_STD_TX_RING_MODE_ENABLE;
+		HWRM_FUNC_CFG_INPUT_FLAGS_STD_TX_RING_MODE_ENABLE;
 	rc = bnxt_hwrm_pf_func_cfg(bp, 1);
 	if (rc)
 		return rc;
