@@ -10973,6 +10973,11 @@ cmd_set_vf_vlan_anti_spoof_parsed(
 	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
 		return;
 
+#ifdef RTE_LIBRTE_BNXT_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_bnxt_set_vf_vlan_anti_spoof(res->port_id,
+							  res->vf_id, is_on);
+#endif
 #ifdef RTE_LIBRTE_IXGBE_PMD
 	if (ret == -ENOTSUP)
 		ret = rte_pmd_ixgbe_set_vf_vlan_anti_spoof(res->port_id,
@@ -11185,6 +11190,11 @@ cmd_set_vf_vlan_stripq_parsed(
 		ret = rte_pmd_ixgbe_set_vf_vlan_stripq(res->port_id,
 			res->vf_id, is_on);
 #endif
+#ifdef RTE_LIBRTE_BNXT_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_bnxt_set_vf_vlan_stripq(res->port_id,
+						      res->vf_id, is_on);
+#endif
 #ifdef RTE_LIBRTE_I40E_PMD
 	if (ret == -ENOTSUP)
 		ret = rte_pmd_i40e_set_vf_vlan_stripq(res->port_id,
@@ -11279,6 +11289,11 @@ cmd_set_vf_vlan_insert_parsed(
 	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
 		return;
 
+#ifdef RTE_LIBRTE_BNXT_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_bnxt_set_vf_vlan_insert(res->port_id,
+						      res->vf_id, res->vlan_id);
+#endif
 #ifdef RTE_LIBRTE_IXGBE_PMD
 	if (ret == -ENOTSUP)
 		ret = rte_pmd_ixgbe_set_vf_vlan_insert(res->port_id, res->vf_id,
