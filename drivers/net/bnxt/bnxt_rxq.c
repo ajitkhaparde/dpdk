@@ -32,7 +32,8 @@ uint64_t bnxt_get_rx_port_offloads(struct bnxt *bp)
 			  RTE_ETH_RX_OFFLOAD_VLAN_EXTEND |
 			  RTE_ETH_RX_OFFLOAD_TCP_LRO |
 			  RTE_ETH_RX_OFFLOAD_SCATTER |
-			  RTE_ETH_RX_OFFLOAD_RSS_HASH;
+			  RTE_ETH_RX_OFFLOAD_RSS_HASH |
+			  RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT;
 
 	if (bp->flags & BNXT_FLAG_PTP_SUPPORTED)
 		rx_offload_capa |= RTE_ETH_RX_OFFLOAD_TIMESTAMP;
