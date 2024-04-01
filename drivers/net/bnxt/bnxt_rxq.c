@@ -222,6 +222,8 @@ void bnxt_rx_queue_release_mbufs(struct bnxt_rx_queue *rxq)
 		for (i = 0;
 		     i < rxq->rx_ring->rx_ring_struct->ring_size; i++) {
 			if (sw_ring[i]) {
+				if (rxq->rx_mbuf_reuse)
+					rte_mbuf_refcnt_set(sw_ring[i], 0);
 				if (sw_ring[i] != &rxq->fake_mbuf)
 					rte_pktmbuf_free_seg(sw_ring[i]);
 				sw_ring[i] = NULL;
@@ -382,6 +384,9 @@ int bnxt_rx_queue_setup_op(struct rte_eth_dev *eth_dev,
 	rxq->nb_rx_desc = nb_desc;
 	rxq->rx_free_thresh =
 		RTE_MIN(rte_align32pow2(nb_desc) / 4, RTE_BNXT_MAX_RX_BURST);
+
+	if (bp->flags2 & BNXT_FLAGS2_RX_MBUF_REUSE)
+		rxq->rx_mbuf_reuse = true;
 
 	PMD_DRV_LOG(DEBUG,
 		    "App supplied RXQ drop_en status : %d\n", rx_conf->rx_drop_en);

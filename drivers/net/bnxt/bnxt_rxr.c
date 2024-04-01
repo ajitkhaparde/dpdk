@@ -56,6 +56,10 @@ static inline int bnxt_alloc_rx_data(struct bnxt_rx_queue *rxq,
 		return -ENOMEM;
 	}
 
+	/* Hold the ref count so that the application does not free the mbuf */
+	if (rxq->rx_mbuf_reuse)
+		rte_mbuf_refcnt_update(mbuf, 1);
+
 	*rx_buf = mbuf;
 	mbuf->data_off = RTE_PKTMBUF_HEADROOM;
 
@@ -126,7 +130,7 @@ static inline void bnxt_reuse_rx_mbuf(struct bnxt_rx_ring_info *rxr,
 
 static inline
 struct rte_mbuf *bnxt_consume_rx_buf(struct bnxt_rx_ring_info *rxr,
-				     uint16_t cons)
+				     uint16_t cons, bool recycle)
 {
 	struct rte_mbuf **cons_rx_buf;
 	struct rte_mbuf *mbuf;
@@ -134,7 +138,9 @@ struct rte_mbuf *bnxt_consume_rx_buf(struct bnxt_rx_ring_info *rxr,
 	cons_rx_buf = &rxr->rx_buf_ring[RING_IDX(rxr->rx_ring_struct, cons)];
 	RTE_ASSERT(*cons_rx_buf != NULL);
 	mbuf = *cons_rx_buf;
-	*cons_rx_buf = NULL;
+	/* PMD is supposed to cycle through the allocated mbufs. Don't reset. */
+	if (!recycle)
+		*cons_rx_buf = NULL;
 
 	return mbuf;
 }
@@ -253,7 +259,7 @@ static void bnxt_tpa_start(struct bnxt_rx_queue *rxq,
 		return;
 	}
 
-	mbuf = bnxt_consume_rx_buf(rxr, data_cons);
+	mbuf = bnxt_consume_rx_buf(rxr, data_cons, rxq->rx_mbuf_reuse);
 
 	bnxt_reuse_rx_mbuf(rxr, tpa_info->mbuf);
 
@@ -289,7 +295,8 @@ static void bnxt_tpa_start(struct bnxt_rx_queue *rxq,
 
 	/* recycle next mbuf */
 	data_cons = RING_NEXT(data_cons);
-	bnxt_reuse_rx_mbuf(rxr, bnxt_consume_rx_buf(rxr, data_cons));
+	bnxt_reuse_rx_mbuf(rxr, bnxt_consume_rx_buf(rxr, data_cons,
+						    rxq->rx_mbuf_reuse));
 
 	rxr->rx_next_cons = RING_IDX(rxr->rx_ring_struct,
 				     RING_NEXT(data_cons));
@@ -372,14 +379,20 @@ static int bnxt_rx_pages(struct bnxt_rx_queue *rxq,
 		last->next = ag_mbuf;
 		last = ag_mbuf;
 
-		*ag_buf = NULL;
-
-		/*
-		 * As aggregation buffer consumed out of order in TPA module,
-		 * use bitmap to track freed slots to be allocated and notified
-		 * to NIC
+		/* If PMD is supposed to cycle through the allocated mbufs, don't
+		 * reset the address. Just increment the producer index & move on.
 		 */
-		rte_bitmap_set(rxr->ag_bitmap, ag_cons);
+		if (!rxq->rx_mbuf_reuse) {
+			*ag_buf = NULL;
+
+			/*
+			 * As aggregation buffer consumed out of order in TPA module,
+			 * use bitmap to track freed slots to be allocated and notified
+			 * to NIC
+			 */
+			rte_bitmap_set(rxr->ag_bitmap, ag_cons);
+		}
+		rxr->ag_raw_prod = RING_NEXT(rxr->ag_raw_prod);
 	}
 	last->next = NULL;
 	bnxt_prod_ag_mbuf(rxq);
@@ -1029,13 +1042,18 @@ static int bnxt_rx_pages_crx(struct bnxt_rx_queue *rxq, struct rte_mbuf *mbuf,
 		last->next = ag_mbuf;
 		last = ag_mbuf;
 
-		*ag_buf = NULL;
-		/*
-		 * As aggregation buffer consumed out of order in TPA module,
-		 * use bitmap to track freed slots to be allocated and notified
-		 * to NIC. TODO: Is this needed. Most likely not.
+		/* If PMD is supposed to cycle through the allocated mbufs, don't
+		 * reset the address. Just increment the producer index & move on.
 		 */
-		rte_bitmap_set(rxr->ag_bitmap, ag_cons);
+		if (!rxq->rx_mbuf_reuse) {
+			*ag_buf = NULL;
+			/*
+			 * As aggregation buffer consumed out of order in TPA module,
+			 * use bitmap to track freed slots to be allocated and notified
+			 * to NIC. TODO: Is this needed. Most likely not.
+			 */
+			rte_bitmap_set(rxr->ag_bitmap, ag_cons);
+		}
 		rxr->ag_cons = RING_IDX(rxr->ag_ring_struct, RING_NEXT(ag_cons));
 	}
 	last->next = NULL;
@@ -1070,7 +1088,7 @@ static int bnxt_crx_pkt(struct rte_mbuf **rx_pkt,
 	raw_prod = rxr->rx_raw_prod;
 
 	cons = rxcmp->errors_agg_bufs_opaque & BNXT_CRX_CQE_OPAQUE_MASK;
-	mbuf = bnxt_consume_rx_buf(rxr, cons);
+	mbuf = bnxt_consume_rx_buf(rxr, cons, rxq->rx_mbuf_reuse);
 	if (mbuf == NULL)
 		return -EBUSY;
 
@@ -1089,10 +1107,18 @@ static int bnxt_crx_pkt(struct rte_mbuf **rx_pkt,
 	mbuf->packet_type = bnxt_parse_pkt_type_crx(rxcmp);
 	bnxt_set_vlan_crx(rxcmp, mbuf);
 
+	/* If PMD is supposed to cycle through the allocated mbufs, do not
+	 * alloc mbuf. But increment the producer index & move on.
+	 */
+	if (rxq->rx_mbuf_reuse)
+		goto skip_alloc;
+
 	if (bnxt_alloc_rx_data(rxq, rxr, raw_prod)) {
 		rc = -ENOMEM;
 		goto rx;
 	}
+
+skip_alloc:
 	raw_prod = RING_NEXT(raw_prod);
 	rxr->rx_raw_prod = raw_prod;
 
@@ -1187,7 +1213,7 @@ static int bnxt_rx_pkt(struct rte_mbuf **rx_pkt,
 		rc = -EBUSY;
 		goto next_rx;
 	}
-	mbuf = bnxt_consume_rx_buf(rxr, cons);
+	mbuf = bnxt_consume_rx_buf(rxr, cons, rxq->rx_mbuf_reuse);
 	if (mbuf == NULL)
 		return -EBUSY;
 
@@ -1265,11 +1291,20 @@ reuse_rx_mbuf:
 	 * calls in favour of a tight loop with the same function being called
 	 * in it.
 	 */
-	raw_prod = RING_NEXT(raw_prod);
+
+	/* If PMD is supposed to cycle through the allocated mbufs, do not
+	 * alloc mbuf. But increment the producer index & move on.
+	 */
+	if (rxq->rx_mbuf_reuse)
+		goto skip_alloc;
+
 	if (bnxt_alloc_rx_data(rxq, rxr, raw_prod)) {
 		rc = -ENOMEM;
 		goto rx;
 	}
+
+skip_alloc:
+	raw_prod = RING_NEXT(raw_prod);
 	rxr->rx_raw_prod = raw_prod;
 rx:
 	rxr->rx_next_cons = RING_IDX(rxr->rx_ring_struct, RING_NEXT(cons));

@@ -105,6 +105,7 @@ static const struct rte_pci_id bnxt_pci_id_map[] = {
 #define BNXT_DEVARG_APP_ID	"app-id"
 #define BNXT_DEVARG_IEEE_1588	"ieee-1588"
 #define BNXT_DEVARG_CQE_MODE	"cqe-mode"
+#define BNXT_DEVARG_RX_MB_REUSE	"rx-mbuf-reuse"
 
 static const char *const bnxt_dev_args[] = {
 	BNXT_DEVARG_REPRESENTOR,
@@ -119,6 +120,7 @@ static const char *const bnxt_dev_args[] = {
 	BNXT_DEVARG_APP_ID,
 	BNXT_DEVARG_IEEE_1588,
 	BNXT_DEVARG_CQE_MODE,
+	BNXT_DEVARG_RX_MB_REUSE,
 	NULL
 };
 
@@ -172,6 +174,11 @@ static const char *const bnxt_dev_args[] = {
  * rep_fc_f2r == Flow control for the endpoint to representor direction
  */
 #define BNXT_DEVARG_REP_FC_F2R_INVALID(rep_fc_f2r)	((rep_fc_f2r) > 1)
+
+/*
+ * rx-mbuf-reuse = 0 or 1 to control Rx mbuf reuse
+ */
+#define BNXT_DEVARG_RX_MBUF_REUSE_INVALID(val)		((val) > 1)
 
 int bnxt_cfa_code_dynfield_offset = -1;
 
@@ -1410,7 +1417,7 @@ bnxt_receive_function(struct rte_eth_dev *eth_dev)
 		  RTE_ETH_RX_OFFLOAD_VLAN_FILTER))
 		goto use_scalar_rx;
 
-	if (bp->ieee_1588)
+	if (bp->ieee_1588 || bp->flags2 & BNXT_FLAGS2_RX_MBUF_REUSE)
 		goto use_scalar_rx;
 
 #if defined(RTE_ARCH_X86)
@@ -6150,6 +6157,42 @@ bnxt_parse_devarg_rep_fc_f2r(__rte_unused const char *key,
 }
 
 static int
+bnxt_parse_devarg_rx_mbuf_reuse(__rte_unused const char *key,
+				const char *value, void *opaque_arg)
+{
+	struct bnxt *bp = opaque_arg;
+	unsigned long rx_mbuf_reuse;
+	char *end = NULL;
+
+	if (!value || !opaque_arg) {
+		PMD_DRV_LOG(ERR,
+			    "Invalid parameter passed to rx-mbuf-reuse "
+			    "devargs.\n");
+		return -EINVAL;
+	}
+
+	rx_mbuf_reuse = strtoul(value, &end, 10);
+	if (end == NULL || *end != '\0' ||
+	    (rx_mbuf_reuse == ULONG_MAX && errno == ERANGE)) {
+		PMD_DRV_LOG(ERR,
+			    "Invalid parameter passed to rx-mbuf-reuse "
+			    "devargs.\n");
+		return -EINVAL;
+	}
+
+	if (BNXT_DEVARG_RX_MBUF_REUSE_INVALID(rx_mbuf_reuse)) {
+		PMD_DRV_LOG(ERR, "Invalid rx-mbuf-reuse(%d) devargs.\n",
+			    (uint16_t)rx_mbuf_reuse);
+		return -EINVAL;
+	}
+
+	bp->flags2 |= BNXT_FLAGS2_RX_MBUF_REUSE;
+	PMD_DRV_LOG(INFO, "rx-mbuf-reuse=%d feature enabled.\n", (uint16_t)rx_mbuf_reuse);
+
+	return 0;
+}
+
+static int
 bnxt_parse_dev_args(struct bnxt *bp, struct rte_devargs *devargs)
 {
 	struct rte_kvargs *kvlist;
@@ -6201,6 +6244,13 @@ err:
 	 */
 	rte_kvargs_process(kvlist, BNXT_DEVARG_CQE_MODE,
 			   bnxt_parse_devarg_cqe_mode, bp);
+
+	/*
+	 * Handler for "rx-mbuf-reuse" devarg.
+	 * Invoked as for ex: "-a 000:00:0d.0,rx-mbuf-reuse=1"
+	 */
+	rte_kvargs_process(kvlist, BNXT_DEVARG_RX_MB_REUSE,
+			   bnxt_parse_devarg_rx_mbuf_reuse, bp);
 
 	rte_kvargs_free(kvlist);
 	return ret;

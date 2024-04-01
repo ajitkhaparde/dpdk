@@ -46,6 +46,7 @@ struct bnxt_rx_queue {
 	struct rte_mbuf			fake_mbuf;
 	RTE_ATOMIC(uint64_t)		rx_mbuf_alloc_fail;
 	uint8_t				need_realloc;
+	bool				rx_mbuf_reuse;
 	const struct rte_memzone *mz;
 };
 
